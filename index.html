@@ -1012,7 +1012,6 @@ a { color: inherit; }
   padding: 0;
 }
 .plan-hits { display: grid; }
-.plan-hit-none { padding: 4px 0; }
 .jr-track { display: flex; align-items: center; overflow: hidden; }
 .jr-seg { height: 6px; min-width: 6px; }
 .jr-joint {
@@ -2408,6 +2407,9 @@ let largeText = localStorage.getItem(LARGE_KEY) === '1';
 let journey = { from: '', to: '' };
 // 出行頁搜尋框而家打緊嘅字（re-render 之後要留返，所以唔可以只靠 DOM）
 let journeyQuery = { from: '', to: '' };
+// 建議清單係唔係「用戶真係打緊字」而開（每次 re-render 重設）——
+// 輸入框預填嘅係現時已選站名，唔可以當作用戶輸入而彈清單。
+let journeyTyping = { from: false, to: false };
 let applyingHash = false;
 let busOp = 'kmb';
 let busFareMap = null;
@@ -4133,24 +4135,29 @@ function searchStations(q, limit = 8) {
   return hits.slice(0, limit).map((h) => h[1]);
 }
 
-/** 建議清單內容。搵唔到就出提示，唔會靜靜雞乜都冇。 */
-function journeyHitsHtml(kind) {
-  const codes = searchStations(journeyQuery[kind]);
-  if (!codes.length) return '<p class="muted plan-hit-none">搵唔到呢個站，試下打站名或者站代碼。</p>';
-  return codes.map((code) => `
+/**
+ * 建議清單內容：只列**輸入過濾出嚟**嘅站（去重），唔會夾雜現時已選嘅站 ——
+ * 已選站要自己符合輸入先會出現喺度。
+ */
+function journeyHitsHtml(kind, codes) {
+  return [...new Set(codes)].map((code) => `
     <button type="button" class="station-item" data-journey-hit="${kind}" data-journey-code="${esc(code)}">
       ${stationLines(code).map((l) => `<span class="dot" style="background:${mtrColorVar(l)}"></span>`).join('')}
       ${staName(code)}<span class="muted">${esc(code)}</span>
     </button>`).join('');
 }
 
-/** 只重畫建議清單（唔重畫成張卡）—— 唔係打字嗰陣個焦點會飛走。 */
+/**
+ * 只重畫建議清單（唔重畫成張卡）—— 唔係打字嗰陣個焦點會飛走。
+ * 清單只喺「用戶打過字」而且「真係有命中」先開：無命中／清空輸入／未打過字
+ * 一律收埋，唔會無端端出一個同輸入無關嘅建議。
+ */
 function paintJourneyHits(kind) {
   const box = $(kind === 'from' ? 'journeyFromHits' : 'journeyToHits');
   if (!box) return;
-  const empty = !journeyQuery[kind].trim();
-  box.innerHTML = empty ? '' : journeyHitsHtml(kind);
-  box.hidden = empty;
+  const codes = journeyTyping[kind] ? searchStations(journeyQuery[kind]) : [];
+  box.hidden = !codes.length;
+  box.innerHTML = codes.length ? journeyHitsHtml(kind, codes) : '';
 }
 
 /**
@@ -4209,10 +4216,11 @@ function renderJourney() {
   $('journeyFrom').onchange = () => { journey.from = $('journeyFrom').value; journeyQuery.from = MTR_STATION_NAMES[journey.from] || ''; renderJourney(); };
   $('journeyTo').onchange = () => { journey.to = $('journeyTo').value; journeyQuery.to = MTR_STATION_NAMES[journey.to] || ''; renderJourney(); };
   // 搜尋框：打字即篩，Enter／撳建議就揀站（唔會重畫成張卡，焦點唔會飛走）
+  journeyTyping = { from: false, to: false };   // 新一版輸入框＝未打過字 → 清單收埋
   [['from', 'journeyFromSearch', 'journeyFromHits'], ['to', 'journeyToSearch', 'journeyToHits']].forEach(([kind, inputId, hitsId]) => {
     const input = $(inputId);
     input.value = journeyQuery[kind];
-    input.oninput = () => { journeyQuery[kind] = input.value; paintJourneyHits(kind); };
+    input.oninput = () => { journeyQuery[kind] = input.value; journeyTyping[kind] = true; paintJourneyHits(kind); };
     input.onkeydown = (e) => {
       if (e.key !== 'Enter') return;
       const first = $(hitsId).querySelector('[data-journey-hit]');
